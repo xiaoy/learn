@@ -100,6 +100,151 @@ D3D11通过查看绑定的输入输出资源，指出啥时候需要可见性变
 D3D12和Vulan背后思考的就是通过应用（app）向驱动提供必要的可见性变化去消除这些缺点。这种方式简化了驱动，让应用自己设置合理的“barriers”。如果你的渲染设置是固定的，只需要将“barriers”硬编码并且几乎CPU零消耗。或者你可以实现引擎功能，[建立自己的依赖树](https://www.ea.com/frostbite/news/framegraph-extensible-rendering-architecture-in-frostbite)去[侦测需要的“barriers”](https://www.gdcvault.com/play/1024656/Advanced-Graphics-Tech-Moving-to)。
 
 ## 02 同步gpu线程
+上一篇介绍了什么是”barrier“，为何要用”barrier“。当后面的绘制/批次线程依赖前面的绘制/批次线程完成时，如何确保不重叠。这篇文章挖掘CPU如何处理这种同步问题，并且讨论这种实现对高性能的影响。
+
+### MJP-3000 编程
+为了解释GPU线程同步，假象一个GPU，MJP-3000，结构如下：
+
+<p align="center">
+<img src="res/gpu-overview1.png">
+</p>
+
+#### MJP 简介
+* 在左边的命令处理器（Command Processor）是所有操作的核心，它的工作是从命令缓存（Command buffer）读取命令（Command），然后协调 Shader Core 执行
+* 16核心的处理器相互独立，并行执行命令
+* 命令处理器只执行一种类型的命令：DISPATCH，此命令做两件事：多少线程需要运行，需要运行那个shader
+* 16核心可以任意的访问最右边的内存（Memory）
+
+#### MJP 花费时钟周期说明
+* Command Processor 花费一个时钟周期，从Command Buffer 读取一个Command，然后将Command打包成线程组（thread group）放入到线程队列（Thread Queue）里
+* Shader Core 从线程队列里取出最先进入队列的线程（FIFO），需要另一个周期
+* Shader Core 执行需要的周期和对应执行的Shader相关
+ 
+### 调度和刷新
+现在举个例子，分发32个线程，写入独立的内存元素。这些批次将执行shader ”A“，执行”A“需要100个时钟周期，16核执行完所有批次需要200个时钟周期，以下为执行流程：
+
+#### step1：
+
+![step-1](res/single_dispatch_0000_layer-1.png)
+
+#### step2：
+
+![step-2](res/single_dispatch_0001_layer-2.png)
+
+#### step3：
+
+![step-3](res/single_dispatch_0002_layer-3.png)
+
+#### step4：
+
+![step-4](res/single_dispatch_0003_layer-4.png)
+
+#### step5：
+
+![step-5](res/single_dispatch_0004_layer-5.png)
+
+#### step6：
+
+![step-6](res/single_dispatch_0005_layer-6.png)
+
+现在假设另外一种情况：
+1. 装配24个线程运行程序”A“来写入24个独立的内存元素
+2. 装配24个线程运行程序”B“，写入其它24个独立内存元素，但是程序”B“需要读取”A“要写入的内容
+
+现在将两个批次命令放入Command Buffer，程序”A“为红色，程序”B“为绿色。
+
+#### step1：
+
+![step-1](res/dispatch_overlap_0000_layer-1.png)
+
+#### step2：
+
+![step-2](res/dispatch_overlap_0001_layer-2.png)
+
+#### step3：
+
+![step-3](res/dispatch_overlap_0002_layer-3.png)
+
+#### step4：
+
+![step-3](res/dispatch_overlap_0003_layer-4.png)
+
+#### step5：
+
+![step-4](res/dispatch_overlap_0004_layer-5.png)
+
+步骤三”A“和”B“同时执行，但是”B“要读取”A“写入的内存内容，这种并行运行，导致不可预测的结果。为了让”A“先执行结果，”B“在执行，需要一个同步点，这时引入新的命令**刷新（FLUSH）**，它的工作原理是：到运行到”FLUSH“命令，命令处理器等待所有的核心（shader core）运行玩自己的任务，再继续往下执行。添加”FLUSH“命令后，我们的模拟结果如下：
+
+#### step1：
+
+![step-1](res/flush_between_dispatches_0000_layer-1.png)
+
+#### step2：
+
+![step-2](res/flush_between_dispatches_0001_layer-2.png)
+
+#### step3：
+
+![step-3](res/flush_between_dispatches_0002_layer-3.png)
+
+#### step4：
+
+![step-4](res/flush_between_dispatches_0003_layer-4.png)
+
+#### step5：
+
+![step-5](res/flush_between_dispatches_0004_layer-5.png)
+
+#### step6：
+
+![step-6](res/flush_between_dispatches_0005_layer-6.png)
+
+#### step7：
+
+![step-7](res/flush_between_dispatches_0006_layer-71.png)
+
+#### step8：
+
+![step-8](res/flush_between_dispatches_0007_layer-8.png)
+
+"FLUSH"命令阻止命令队列后续命令运行，直到线程队列里的所有线程执行结果后，继续执行后续的命令。这就是”barrier“的作用。事实上在GPU的调用流程是，先发出批次”A"，发出“barrier”等待缓存区从写状态变为读状态，然后发出批次“B”。
+
+使用“barrier”是有性能损耗的，因为添加了“FLUSH”命令后，有空闲核心。性能的消耗基于使用率的的降低。计算性能损失就是通过核心满负荷使用的时钟周期和添加完“FLUSH”命令后的对比。因此性能损失也和线程数量，以及shader执行时间相关。
+
+如果两个线程可以并行处理，我们可以将这种GPU的并行类比为CPU的[并行执行指令](https://en.wikipedia.org/wiki/Instruction-level_parallelism)。我们的命令流在这种情况的并行操作类似于[VLIW](https://en.wikipedia.org/wiki/Very_long_instruction_word)架构执行。
+
+### 等待和标签
+引入程序”C“可以和”A“并行执行，但是”C“需要400时钟周期，让我们来模拟这种情况：
+
+
+#### step1：
+
+![step-1](res/flush_with_overlap_long_0000_layer-1.png)
+
+#### step2：
+
+![step-2](res/flush_with_overlap_long_0001_layer-2.png)
+
+#### step3：
+
+![step-3](res/flush_with_overlap_long_0002_layer-3.png)
+
+#### step4：
+
+![step-4](res/flush_with_overlap_long_0003_layer-4.png)
+
+#### step5：
+
+![step-5](res/flush_with_overlap_long_0004_layer-5.png)
+
+#### step6：
+
+![step-6](res/flush_with_overlap_long_0005_layer-6.png)
+
+#### step7：
+
+![step-7](res/flush_with_overlap_long_0006_layer-7.png)
+
 
 ## 03 多命令处理器
 
