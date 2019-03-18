@@ -245,6 +245,72 @@ D3D12和Vulan背后思考的就是通过应用（app）向驱动提供必要的�
 
 ![step-7](res/flush_with_overlap_long_0006_layer-7.png)
 
+203时钟周期执行完后，核心有一半处于闲置状态，这是因为命令”FLUSH“要等待线程队列里所有的线程执行结束才可以继续往下执行。如果我们调整了”A“和”C“的顺序，先让”C“执行，但是在”A“的后面还是有闲置核心处于闲置状态。
+
+现在MJP-3000添加新命令，”SIGNAL_POST_SHADER“和”WAIT_SIGNAL“。
+
+* SIGNAL_POST_SHADER，当所有shader执行完成后，它通知命令处理器（Command Processor）在内存地址（称作 fence or label）写入信号数据。当线程队列里的所有线程在运行状态时，通知命令处理器执行下一个命令。
+* WAIT_SIGNAL，通知命令处理器先暂停后续任务，等待内存地址被写入信号数据
+
+新版 MJ-3000 GPU如下：
+
+![MJ-3000](res/label-overview.png)
+
+当SIGNAL_POST_SHADER 执行后，在线程队列其它地方有等待label。当状态为”0“时意味着还未收到信号，为”1“时收到信号，等待依赖将释放。
+
+现在展示加入新命令后的模拟：
+
+#### step1:
+
+![step1](res/split_barrier_overlap_0000_layer-1.png)
+
+#### step2:
+
+![step2](res/split_barrier_overlap_0001_layer-2.png)
+
+#### step3:
+
+![step3](res/split_barrier_overlap_0002_layer-3.png)
+
+#### step4:
+
+![step4](res/split_barrier_overlap_0003_layer-4.png)
+
+#### step5:
+
+![step5](res/split_barrier_overlap_0004_layer-5.png)
+
+#### step6:
+
+![step6](res/split_barrier_overlap_0005_layer-6.png)
+
+#### step7:
+
+![step7](res/split_barrier_overlap_0006_layer-7.png)
+
+#### step8:
+
+![step8](res/split_barrier_overlap_0007_layer-8.png)
+
+#### step9:
+
+![step9](res/split_barrier_overlap_0008_layer-9.png)
+
+#### step10:
+
+![step10](res/split_barrier_overlap_0009_layer-10.png)
+
+通过信号设置和接收的方式，让在执行”C”程序时闲置的核心全部利用起来，提升了效率。
+
+如果对MJ-3000进行Vulkan编程，这种信号/等待行为大概就是你希望看到的，当使用分离障碍（split barrier），Vulkan里 `vkCmdSetEvent + vkCmdWaitEvents ` 使用。分离障碍让你高效的指定两个不同的生命点：当前状态（read，write， etc），和你需要资源所在的新状态。通过这种方式标明“barrier”的开始和结束的工作，更好的帮助驱动决定是否并行执行。例如，DXD12的工作方式如下：
+
+* 命令 Dispatch A 写入Buffer A
+* 开始将Buffer A 从“写->读”转换
+* 命令 Dispatch C 写入Buffer C
+* 结束Buffer A 从“写->读”转换
+* 命令 Dispatch B 写入Buffer B
+
+
 
 ## 03 多命令处理器
 
