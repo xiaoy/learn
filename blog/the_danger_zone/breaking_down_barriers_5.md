@@ -14,11 +14,11 @@
 
 当你刚刚认为3d GPU只是被少数人用来玩游戏，2d 图形加速器才普及这样一种情景。然而随着Windows vista 发布临近，事情迅速的发生了变化。在低端机器上都附加上了3d功能图形处理器（感谢[Intel的GMA系列](https://en.wikipedia.org/wiki/Intel_GMA)集成显卡），随着GPU的可编程性增强，导致很多有识之士挖掘除了3d游戏以外的的功能。微软的系统开发者使用GPU 3D渲染功能来展示Windows 系统UI。换句话说，随着GPU的提升，是时候让OS/Driver技术栈一起进化，这就是[WDMM](https://en.wikipedia.org/wiki/Windows_Display_Driver_Model)推出的原因。
 
-WDDM是”[Windows Diplay Dirver Model](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/windows-vista-display-driver-model-design-guide)“的缩写，是新的驱动技术栈，从Windows Vista开始来替代 XDDM/XPDM。WDDM相比旧的版本，是一种新的开始，它开始将显卡板载内存当做共享资源来被系统统筹调度。比如使用WDDM后，系统负责提交`Command buffers`（Command Buffer）到GPU，驱动仅仅提供[接口](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/submitting-a-command-buffer)（hooks）来构建对应硬件格式的`Command buffers`（Command Buffer），然后被系统协调调用执行。这就允许系统内部协调器决定何时应给执行特定的程序包，或者说决定一个程序的绘制命令比另一个程序的更重要。与此相类似，全局的显存管理器拥有控制板载显卡内存的权限，驱动提供了[接口](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/paging-video-memory-resources)允许系统将内存数据转移到显卡内存，反之亦然。这帮助统一所有厂商的GPU内存管理。通过有效虚拟化所有资源，消除了对D3D9中旧的[MANAGED资源池](https://docs.microsoft.com/en-us/windows/desktop/direct3d9/managing-resources)等创可贴的需求。WDDM驱动技术栈的[通用流程](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/windows-vista-and-later-display-driver-model-operation-flow)如下图所示：
+WDDM是”[Windows Diplay Dirver Model](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/windows-vista-display-driver-model-design-guide)“的缩写，是新的驱动技术栈，从Windows Vista开始来替代 XDDM/XPDM。WDDM相比旧的版本，是一种新的开始，它开始将显卡板载内存当做共享资源来被系统统筹调度。比如使用WDDM后，系统负责提交`Command buffers`到GPU，驱动仅仅提供[接口](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/submitting-a-command-buffer)（hooks）来构建对应硬件格式的`Command buffers`，然后被系统协调调用执行。这就允许系统内部协调器决定何时应给执行特定的程序包，或者说决定一个程序的绘制命令比另一个程序的更重要。与此相类似，全局的显存管理器拥有控制板载显卡内存的权限，驱动提供了[接口](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/paging-video-memory-resources)允许系统将内存数据转移到显卡内存，反之亦然。这帮助统一所有厂商的GPU内存管理。通过有效虚拟化所有资源，消除了对D3D9中旧的[MANAGED资源池](https://docs.microsoft.com/en-us/windows/desktop/direct3d9/managing-resources)等创可贴的需求。WDDM驱动技术栈的[通用流程](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/windows-vista-and-later-display-driver-model-operation-flow)如下图所示：
 
 ![wddm flow](res/wddm_flow.png)
 
-* [DMA buffer](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/introduction-to-command-and-dma-buffers)，驱动有用户模式/内核模式之分，在用户模式称作`Command buffers`（Command buffer，在内核模式下内核将`Command buffers`称作DMA）
+* [DMA buffer](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/introduction-to-command-and-dma-buffers)，驱动有用户模式/内核模式之分，在用户模式称作`Command buffers`（在内核模式下内核将`Command buffers`称作DMA）
 * WDDM 1.0 GPU的内存管理很简陋，只能使用物理地址访问内存。当处理缓存（buffer），贴图等资源，使用厂商提供的驱动直接访问物理地址是个坏的注意。但是在WDDM下，系统显存管理器能够按照需求将资源移出移进设备内存。
 * WDDM请求驱动根据DMA buffer里Command提交分配表和补丁表。分配表告知系统DMA buffer里的command所引用的所有资源，通过这些信息，内存管理器决定哪些资源保留在设备内存里。补丁列表告知系统DMA buffer真正引用的资源所在地址，通过这些信息，buffer在GPU执行之前，系统[使用物理地址修复DMA缓存](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/d3dkmddi/nc-d3dkmddi-dxgkddi_patch)(patch the DMA buffer with physic address)。
 
@@ -55,13 +55,13 @@ D3DKMDT_COMPUTE_PREEMPTION_SHADER_BOUNDARY
 
 自从对所有内存和资源的生命周期管理负责，在使用D3D12的地方，基本都是处理相似的模式。当更新常量缓存时，不在有默认`MAP_DISCARD`来保护内存，对应的必须建立自己的流程机制来获取安全的内存。如果你想读回GPU执行结果，必须确保提交了对应的`Command buffers`并且在读回CPU之前要等待命令完成。正如在第一个讨论的”barriers“，从驱动管理移交到应用程序管理对于开发者来说是非常大的负担。这种转变出自同样确定的原因：以实现更高的效率和多线程。划分命令生成的自然方法是让每个线程或任务生成自己的`Command buffers`，当所有的命令录制完毕后，按照顺序（”chain“）提交到队列。当这种命令生成方式和显示”barriers“以及通过PSO（pipeline state object）的一个指定管线状态的独立接口相结合，将获得一个真正的通过CPU多核心并行生成`Command buffers`的API。
 
-提供更明确的提交控制还使APP利用GPU有多个前端的优势出排列或处理命令。在第三部分讨论了让GPU增加命令处理器来提升核心的使用率，当一个APP提交多个独立依赖链到不同的处理器时。如过陷入旧的D3D11模型，其中任务依赖和提交是隐性的，那么驱动提取非依赖的调度链在第二个命令处理器执行几乎不可能。幸运的是使用D3D12，可以明确地说”这个命令列表可以单独执行，并且依赖其它命令列表“，通过命令队列和围栏（fences）来实现。命令队列（command queue），如名字所示，可以在其中提交`Command buffers`（录制完命令）在GPU上运行。当创建命令队列时，可以指定三种不同类型的命令列表运行在队列上：
+提供更明确的提交控制还使APP利用GPU有多个前端的优势去排列或处理命令。在第三部分讨论了让GPU增加命令处理器来提升核心的使用率，当一个APP提交多个独立依赖链到不同的处理器时。如过陷入旧的D3D11模型，其中任务依赖和提交是隐性的，那么驱动提取非依赖的调度链在第二个命令处理器执行几乎不可能。幸运的是使用D3D12，可以明确地说”这个命令列表可以单独执行，并且依赖其它命令列表“，通过命令队列和fences来实现。命令队列（command queue），如名字所示，可以在其中提交`Command buffers`（录制完命令）在GPU上运行。当创建命令队列时，可以指定三种不同类型的命令列表运行在队列上：
 
 1. COPY-可以执行`CopyResource`命令
 2. Compute-可以执行`CopyResource` 和`Dispatch`命令
 3. DIRECT-可以执行`CopyResouce`、`Dispatch`和`Draw`命令
 
-这些命令列表类型可能对应GPU上不同”引擎"，这就是D3D/WDDM喜欢调用命令处理器的原因。每个引擎可以运行自己不同系列的命令集，因此有三种类型的命令列表。通常独立GPU至少有个可以执行所有命令的处理器，以及至少一个DMA单元，其可以发出针对通过PCI-e总线传输而优化的命令。许多最新的GPU有独立的运算命令处理器，后续在讨论。
+这些命令列表类型可能对应GPU上不同”引擎"，这就是D3D/WDDM喜欢调用命令处理器的原因。每个引擎可以运行自己不同系列的命令集，因此有三种类型的命令列表。通常独立GPU至少有个可以执行所有命令的处理器，以及至少一个DMA单元，其可以发出针对通过PCI-e总线传输而优化的命令。许多最新的GPU有独立的运算命令处理器，后续再讨论。
 
 现在回到第三部分的后处理案例：
 
@@ -109,11 +109,48 @@ D3DKMDT_COMPUTE_PREEMPTION_SHADER_BOUNDARY
 
 ![gpu view](res/gpuview.png)
 
-截图大概显示了四帧截图，通过翻转队列（flip queue)的活动来判断。更暗的区域显示GPU正在等待`VSYNC`时闲置位置，可以用它来标记渲染帧的开始和结束。接近底部是“设备上下文（device contexts）”，其显示了CPU通过单个进程将`Command buffers`提交到虚拟队列。上边是`COMPUTE`提交，下边是`GRAPHIC/DIRECT`提交。所有`Command buffers`最终将提交到硬件队列。从图中可以看到有两个硬件队列，一个是`3d`，另一个是`COMPUTE_0`，两个队列的任务是同步执行的，这样同样说明每个队列的工作是叠加执行的。最终发现这里的情况和第四部分假象的GPU/Driver运行的时间线非常相似，说明我们也可以用这个工具查看多个应用之间的竞争行为。
+截图大概显示了四帧截图，通过翻转队列（flip queue)的活动来判断。更暗的区域显示GPU正在等待`VSYNC`时闲置位置，可以用它来标记渲染帧的开始和结束。接近底部是“设备上下文（device contexts）”，其显示了CPU通过单个进程将`Command buffers`提交到虚拟队列。上边是`COMPUTE`提交，下边是`GRAPHIC/DIRECT`提交。所有`Command buffers`最终将提交到硬件队列。从图中可以看到有两个硬件队列，一个是`3d`，另一个是`COMPUTE_0`，两个队列的任务是同步执行的，这样同样说明每个队列的工作是叠加执行的。最终发现这里的情况和第四部分假想的GPU/Driver运行的时间线非常相似，说明我们也可以用这个工具查看多个应用之间的竞争行为。
 
-对于使用Vulkan，需要注意它的队列/提交模型和D3D12的不一样。Vulkan可以查询物理设备支持那些queue "families"（queue family 对应D3d12中的engine类型），以及有多少个queue family，当[创建logic device](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/html/vkspec.html#devsandqueues-queue-creation)时将这些暴露出的queue传递进去，然后在运行时就可以将`Command buffer`提交到对应的队列。这意味着如果GPU只要一个前端，那就只能看到物理设备暴露出一个队列。
+对于使用Vulkan，需要注意它的队列/提交模型和D3D12的不一样。Vulkan可以查询物理设备支持那些queue "families"（queue family 对应D3D12中的engine类型），以及有多少个queue family，当[创建logic device](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/html/vkspec.html#devsandqueues-queue-creation)时将这些暴露出的queue传递进去，然后在运行时就可以将`Command buffer`提交到对应的队列。这意味着如果GPU只有一个前端，那就只能看到物理设备暴露出一个队列。
 
+在WDDM 2.0 还有一个改善：在WDDM 1.x 时使用物理地址给`Command buffer` 打补丁的流程，在 WDDM2.0 支持了[GPU虚拟内存](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/gpu-virtual-memory-in-wddm-2-0)，不在需要这个流程。在新的模式下，每个进程在GPU内存里有自己的虚拟内存，就像每个进程在CPU内存里那样。应用和驱动可以自由的结合虚拟地址到`Command buffer` 和[ExecuteIndirect argument buffer](https://docs.microsoft.com/en-us/windows/desktop/direct3d12/indirect-drawing)中在执行前而不要昂贵的补丁流程。这种改变使得用户模式下直接生成和提交`Command buffer`供GPU直接使用，而不需要内核模式再生成DMA buffer。这是个很好的性能提升改善，并且我猜想这也是从安全角度方面的一个改善。当使用D3D12接口时通常直接和GPU虚拟内存打交道比如创建vertex buffer views或者设置 root CBV's/SRV's 使用单个指针，对于应用很方便。Vulkan 没有暴露GPU虚拟地址（由于要支持的一些平台，不支持虚拟地址），取而代之的是使用 [allocation/offset pairs](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/vkBindBufferMemory.html)。
 
+## 快速介绍真实GPU
+完成这篇文章前，花一些时间看一下真实的GPU和它们对多核命令处理器的支持。在第2，3，4部分使用了自制GPU模拟了基本的竞争和覆盖运行流程。我还是想看一些真实的例子和我自制的GPU的区别，并且想知道它们和D3D12所支持的队列任务提交之间的关系。
 
-<p style="float: left"><a href="breaking_down_barriers_5.md">Pre</a></p>
+看一下AMD的GPU，来自于[AMD's presentations](http://developer.amd.com/wordpress/media/2013/06/2620_final.pdf)：
+
+![](res/amd_command_processors.png)
+
+在这个图表里有一个'GFX'命令处理器，这是唯一一个使用primitive和pixel pipes来处理 Draw Commands。它也可以使用CS pipeline 访问shader cores来处理 Dispatch calls。在左上角还有几个标签“ACE”的单元，代表“Asynchronous Compute Engine”。这些家伙是简单，独立 Command Processors 阵列用来处理 Compute相关的。这意味着它们可以处理 Dispatch calls并且可以同步处理Commands，但不能处理要使用graphic pipeline的Draw Command，换句话说它们只适合处理D3D12 COMPUTE engine对应需求的任务。这不是意外。在功能方面和拥有单核心处理器的虚拟MJ-4000非常相似，它们在抢占，multitasking，多任务并行提升使用率方面提供同样的益处。如果查看[AMD's documentation](http://amd-dev.wpengine.netdna-cdn.com/wordpress/media/2012/10/Asynchronous-Shaders-White-Paper-FINAL.pdf)就会发现和我之前文章里解释的很多概念相似。
+
+事实上ACE‘s比我的例子中所讨论的更加复杂，主要是每个ACE有8个硬件队列用来提交`Command buffer`到ACE命令处理器。AMD的处理器在单个芯片有8个ACE，这就意味着允许64个不同命令流同步竞争。独立队列支持各种调度和同步操作，这就允许有效的把它们当做一个硬件调度器来使用。在GCN架构的所有版本里包含ACE，包括最新的 RX Vega系列。并且AMD通过4次架构调整改善了一些小的细节。最值得说是最新的[Polaris architecture](http://radeon.com/_downloads/polaris-whitepaper-4.8.16.pdf)，ACE增加了称作“Quick Response Queue”。文档里指出这允许ACE提交优先级高于其他命令处理的任务从而被优先执行，这就是允许之前提到的线程级别的竞争。Polaris还介绍了称作“Hardware Scheduler”（HWS），其被描述为一个增加的独立处理器用来和物理硬件之间创建一个虚拟层。
+
+这些信息指出我们至少看到一个 compute engine暴露给Windows调度器，或者至少一个拥有COMPUTE_BIT位的队列暴露出来通过VULKAN查询物理硬件。在D3D12这边可以通过使用ETW 快照和GPUVIEW来验证，Vulkan通过[Vulkan Hardware Database](https://vulkan.gpuinfo.org/listreports.php)非常简单的验证。下面是当查看[RX Rega](https://radeon.com/_downloads/vega-whitepaper-11.6.17.pdf)的“Queue families”信息。
+
+![](res/vega_vulkan_db.png)
+
+AMD选择将ACE以8个Compute队列的形式暴露给Vulkan，对于独立应用绰绰有余。还有两个设定为 TRANSFER_BIT的队列，这是Vulkan版本的 COPY队列，这些都和AMD的Vega以及其他型号显卡上的DMA硬件单元息息相关。在GPU上的DMA单元专门特殊优化来通过PCI-e总线转移批量数据到显卡上。典型应用就是只读贴图和缓存，它们必须在GPU内存中用来被GPU通过全带宽读取。在D3D12之前的驱动被用来使用对应的资源来初始化APP指定的内存，因为DMA单元被优化用作从系统内存转移资源，并且可以并行执行图形操作。DMA单元也可以将贴图转换为指定的硬件布局，这涉及到使用[Z-order curve](https://en.wikipedia.org/wiki/Z-order_curve)的变种来获得更好的2d缓存布局。在使用D3D12和Vulkan时，必须自己初始化资源，那么在独立显卡上选择COPY队列来做这件事最自然不过了。
+
+对于Nvidia，它们的硬件似乎提供了并行提交多个工作负载到GPU的功能。它们的Kepler架构介绍了称作[Hyper-Q](https://blogs.nvidia.com/blog/2012/08/23/unleash-legacy-mpi-codes-with-keplers-hyper-q/)的概念，听起来和AMD GPU的ACE非常相似。
+
+![](res/hyper-q.png)
+
+文档里描述有32个硬件队列，并且申明队列可以被单个应用用来提交多个内核任务或者多个CUDA应用同时提交工作负载。遗憾的是这个功能仅限于CUDA，从[Nvidia的说明]()指出它们的GPU不能并行执行Hyper-q命令和图形命令。根据Nvidia的说法，只有最近的 Maxwell 2.0架构有能力在“混合模式”下运行，一个硬件队列处理图形命令，其它31个队列并行处理运算命令。理论上这和AMD的硬件有相同的功能。但是貌似Nvidia从来没有将额外的Compute队列暴露给D3D12和Vulkan，取而代之的是让系统将Compute任务合并到图形队列。直到发布最近的Pascal架构，他们在最终决定提供点这方面的相关信息。他们的[白皮书](http://international.download.nvidia.com/geforce-com/international/pdfs/GeForce_GTX_1080_Whitepaper_FINAL.pdf)有一部分描述了新的特性称作“dynamic load balancing”，如下图所示：
+
+![](res/nv_dynamic_load_balancing.png)
+
+> 在Maxwell系列GPU，并行执行工作负载通过静态划分GPU为Graphic子集和Compute子集来实现。如果两个工作负载需要的执行时间和队列的划分比例匹配，那么这种方式非常有效，如果Compute工作负载执行时间比Graphic工作负载时间长，并且新的工作依赖这两个的执行结果，那么划分给Graphic的GPU将闲置。这有可能导致的性能下降超过比采用并行处理任务带来的益处
+
+这说明问题不在队列上，可能在真正执行Compute shader的功能单元上。从描述来看，听起来好像他们的硬件单元需要被配置为“graphic”或“compute”模式（也许SM level），意味着当compute和graphic任务同时执行时需要静态分割GPU。这不是最优的，这就解释了为啥他们要从compute队列任务转换为graphic任务。同时Pascal架构听起来可以动态划分，这可以让并行计算更加灵活。可以通过[GPUView查看](http://www.futuremark.com/static/images/news/nvidia-gtx-1080-async.png)或者[查询暴露给Vulkan的队列](https://vulkan.gpuinfo.org/displayreport.php?id=3970#queuefamilies)确认Pascal GPU将在运算硬件队列执行COMPUTE任务。
+
+![](res/pascal_vulkan_db1.png)
+
+这里有8个compute队列，这和RX Vega匹配。有趣的是还有16个GRAPHICS_BITS位的队列，遗憾的是Nvidia没有过多提及相关信息。
+
+在Pascal的白皮书里提供了thread-level 竞争能力的细节，比起早前Maxwell 2.0 提供的draw-level级别的竞争是非常大的提升。有趣的是也提供了instruction-level级别的竞争，但仅限于CUDA。
+
+Intel用在Skylake CPU上的Gen9架构只有一个DIRECT/graphics 引擎提供给D3D12和Vulkan。连一个COPY 引擎都没有，看起来很奇怪，但是集成显卡和CPU共享内存，不像独立显卡有自己的显存，所以需要独立的硬件单元用来和CPU通信。
+
+<p style="float: left"><a href="breaking_down_barriers_4.md">Pre</a></p>
 <p style="float: right"><a href="breaking_down_barriers_6.md">Next</a></p>
