@@ -63,7 +63,7 @@ if(DataIsReady)
 <p align="center">
 <img src="res/rgp_bindlessdeferred.png">
 </p>
-左边为 `draw call`，右边蓝色条显示 `draw call` 的起始和终止。如图所示这里有很多并行运行的情况。
+左边为 draw call，右边蓝色条显示 draw call 的起始和终止。如图所示这里有很多并行运行的情况。
 
 使用另外一个工具[PIX for windows](https://blogs.msdn.microsoft.com/pix/download/)，如图所示：
 <p align="center">

@@ -52,7 +52,7 @@ ShaderEndBuffer[0] = CBuffer.FrameNum;
 * 向direct queue 提交命令列表
 * 呈递
 * 下一帧
-* 等待最后的呈递完成，使用swap chiain waitable object（便随着VSYNC结束，同步CPU线程）
+* 等待最后的呈递完成，使用swap chiain waitable object（伴随着VSYNC结束，同步CPU线程）
 * 通知fence放行CPU，让执行上一帧提交的任务
 * 循环检查start buffer的值，记录值修改时的时间
 * 循环检查end buffer的值，记录值修改的时间

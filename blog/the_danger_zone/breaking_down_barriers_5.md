@@ -16,7 +16,9 @@
 
 WDDM是”[Windows Diplay Dirver Model](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/windows-vista-display-driver-model-design-guide)“的缩写，是新的驱动技术栈，从Windows Vista开始来替代 XDDM/XPDM。WDDM相比旧的版本，是一种新的开始，它开始将显卡板载内存当做共享资源来被系统统筹调度。比如使用WDDM后，系统负责提交`Command buffers`到GPU，驱动仅仅提供[接口](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/submitting-a-command-buffer)（hooks）来构建对应硬件格式的`Command buffers`，然后被系统协调调用执行。这就允许系统内部协调器决定何时应给执行特定的程序包，或者说决定一个程序的绘制命令比另一个程序的更重要。与此相类似，全局的显存管理器拥有控制板载显卡内存的权限，驱动提供了[接口](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/paging-video-memory-resources)允许系统将内存数据转移到显卡内存，反之亦然。这帮助统一所有厂商的GPU内存管理。通过有效虚拟化所有资源，消除了对D3D9中旧的[MANAGED资源池](https://docs.microsoft.com/en-us/windows/desktop/direct3d9/managing-resources)等创可贴的需求。WDDM驱动技术栈的[通用流程](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/windows-vista-and-later-display-driver-model-operation-flow)如下图所示：
 
-![wddm flow](res/wddm_flow.png)
+<p align="center">
+<img src=res/wddm_flow.png>
+</p>
 
 * [DMA buffer](https://docs.microsoft.com/en-us/windows-hardware/drivers/display/introduction-to-command-and-dma-buffers)，驱动有用户模式/内核模式之分，在用户模式称作`Command buffers`（在内核模式下内核将`Command buffers`称作DMA）
 * WDDM 1.0 GPU的内存管理很简陋，只能使用物理地址访问内存。当处理缓存（buffer），贴图等资源，使用厂商提供的驱动直接访问物理地址是个坏的注意。但是在WDDM下，系统显存管理器能够按照需求将资源移出移进设备内存。
@@ -51,7 +53,9 @@ D3DKMDT_COMPUTE_PREEMPTION_SHADER_BOUNDARY
 ## 当前：WINDOWS 10，D3D12，以及WDDM 2.0
 借助D3D12和WDDM2.0，API和驱动栈暴露出了任务如何提交到GPU。除了抽象出命令被录制到缓存并且被并行处理器异步执行这个事实，D3D12几乎将所有细节暴露给应用程序。API提供接口录制命令（[ID3D12GraphicsCommandList](https://docs.microsoft.com/en-us/windows/desktop/api/d3d12/nn-d3d12-id3d12graphicscommandlist)），另一个命令给录制的命令分配内存（[ID3D12CommandAllocator](https://docs.microsoft.com/en-us/windows/desktop/api/d3d12/nn-d3d12-id3d12commandallocator)），还有一个函数允许将录制好的命令列表放到执行队列里（[ExecuteCommandList](https://docs.microsoft.com/en-us/windows/desktop/api/d3d12/nf-d3d12-id3d12commandqueue-executecommandlists)）。当然这种新的特性伴随着新的责任。自从APP在驱动的位置上，APP需要意识到`Command buffers`正在运行中，防止写入此状态的缓存。这导致典型的双缓存”提交循环（submission loop）“，应用需要在旧的`Command buffers`执行结束后，可以使用对应的执行结果。
 
-![buufer_submission1](res/command_buffer_submission1.png)
+<p align="center">
+<img src=res/command_buffer_submission1.png>
+</p>
 
 自从对所有内存和资源的生命周期管理负责，在使用D3D12的地方，基本都是处理相似的模式。当更新常量缓存时，不在有默认`MAP_DISCARD`来保护内存，对应的必须建立自己的流程机制来获取安全的内存。如果你想读回GPU执行结果，必须确保提交了对应的`Command buffers`并且在读回CPU之前要等待命令完成。正如在第一个讨论的”barriers“，从驱动管理移交到应用程序管理对于开发者来说是非常大的负担。这种转变出自同样确定的原因：以实现更高的效率和多线程。划分命令生成的自然方法是让每个线程或任务生成自己的`Command buffers`，当所有的命令录制完毕后，按照顺序（”chain“）提交到队列。当这种命令生成方式和显示”barriers“以及通过PSO（pipeline state object）的一个指定管线状态的独立接口相结合，将获得一个真正的通过CPU多核心并行生成`Command buffers`的API。
 
@@ -65,7 +69,9 @@ D3DKMDT_COMPUTE_PREEMPTION_SHADER_BOUNDARY
 
 现在回到第三部分的后处理案例：
 
-![](res/bloom_dof_combined2.png)
+<p align="center">
+<img src=res/bloom_dof_combined2.png>
+</p>
 
 让两个依赖链在两个命令处理器上执行，使用D3D12通过如下的步骤：
 
@@ -87,14 +93,16 @@ D3DKMDT_COMPUTE_PREEMPTION_SHADER_BOUNDARY
   * 告知**GfxQueue**等待**FenceB**
   * 提交**GfxCmdListC**到**GfxQueue**
 
-![](res/bloom_dof_annotated.png)
+<p align="center">
+<img src=res/bloom_dof_annotated.png>
+</p>
 
 由于这些D3D12命令非常明确的指出命令列表之间的依赖关系，以及命令列表应当提交的队列类型，因此操作系统和驱动有足够的信息来在不同的命令处理器上真正的调度命令列表。这是对D3D11的重大改进，其隐式的提交模型并未真正的允许这种情况发生。
 
 根据队列和提交任务的API的工作方式，可能诱导大家认为提交命令列表到`ID3D12CommandQueue`会直接提交相关`Command buffers`到特定的GPU硬件前端队列。但在D3D12和WDMM2.0模式下这不是真的。当我们复盘WDDM1.x细节时，OS有自己的命令调度机制来决定一个`Command buffers`何时在GPU上运行，并且这些`Command buffers`是来自己于多个应用提交。D3D12和WDDM2.0情况依然如此。因此没有将`Command buffers`提交到硬件队列，而是提交了OS调度中心。除了让操作系统处理多个应用之间的共享资源，它还允许操作系统虚拟化队列，以便不支持多个前端的硬件拥有多个“虚拟队列“（在D3D12和WDDM术语中称作GPU只有一个引擎）。如果查看上面列出的对队列类型的描述，你可能注意到每个队列类型的支持命令列表实际上是下一个队列类型支持的子集。换句话说`DIRECT`可以做`COMPUTE`和`COPY`队列类型的事情，`COMPUTE`可以做`COPY`队列类型能做的所有事情。
 
 <p align="center">
-<img src="res/queue_types_venn.png" width="300">
+<img src=res/queue_types_venn.png width="300">
 </p>
 
 将queue/engine功能制定被彼此的子集，如有需要，系统可以将提交到`COPY`队列的任务重定向到`DIRECT`引擎。这使应用程序不必根据用户的硬件和驱动支持的功能更改提交`Command buffers`的方式。然而为了解决这个问题，系统必须可以将并行`Command buffers`”压平（flatten）“到串行的`Command buffers`流。举个例子，让我们回到之前使用过的DOF/bloom研究案例。如果要在只有一个`DIRECT`引擎的GPU上提交该系列`Command buffers`，OS必须将提交内容铺平为下图所示：
@@ -126,7 +134,7 @@ D3DKMDT_COMPUTE_PREEMPTION_SHADER_BOUNDARY
 
 事实上ACE‘s比我的例子中所讨论的更加复杂，主要是每个ACE有8个硬件队列用来提交`Command buffer`到ACE命令处理器。AMD的处理器在单个芯片有8个ACE，这就意味着允许64个不同命令流同步竞争。独立队列支持各种调度和同步操作，这就允许有效的把它们当做一个硬件调度器来使用。在GCN架构的所有版本里包含ACE，包括最新的 RX Vega系列。并且AMD通过4次架构调整改善了一些小的细节。最值得说是最新的[Polaris architecture](http://radeon.com/_downloads/polaris-whitepaper-4.8.16.pdf)，ACE增加了称作“Quick Response Queue”。文档里指出这允许ACE提交优先级高于其他命令处理的任务从而被优先执行，这就是允许之前提到的线程级别的竞争。Polaris还介绍了称作“Hardware Scheduler”（HWS），其被描述为一个增加的独立处理器用来和物理硬件之间创建一个虚拟层。
 
-这些信息指出我们至少看到一个 compute engine暴露给Windows调度器，或者至少一个拥有COMPUTE_BIT位的队列暴露出来通过VULKAN查询物理硬件。在D3D12这边可以通过使用ETW 快照和GPUVIEW来验证，Vulkan通过[Vulkan Hardware Database](https://vulkan.gpuinfo.org/listreports.php)非常简单的验证。下面是当查看[RX Rega](https://radeon.com/_downloads/vega-whitepaper-11.6.17.pdf)的“Queue families”信息。
+这些信息指出我们至少看到一个 compute engine暴露给Windows调度器，或者至少一个拥有COMPUTE_BIT位的队列暴露出来通过VULKAN查询物理硬件。在D3D12这边可以通过使用ETW 快照和GPUVIEW来验证，Vulkan通过[Vulkan Hardware Database](https://vulkan.gpuinfo.org/listreports.php)非常简单的验证。下面是查看[RX Rega](https://radeon.com/_downloads/vega-whitepaper-11.6.17.pdf)的“Queue families”信息。
 
 ![](res/vega_vulkan_db.png)
 
@@ -136,7 +144,7 @@ AMD选择将ACE以8个Compute队列的形式暴露给Vulkan，对于独立应用
 
 ![](res/hyper-q.png)
 
-文档里描述有32个硬件队列，并且申明队列可以被单个应用用来提交多个内核任务或者多个CUDA应用同时提交工作负载。遗憾的是这个功能仅限于CUDA，从[Nvidia的说明]()指出它们的GPU不能并行执行Hyper-q命令和图形命令。根据Nvidia的说法，只有最近的 Maxwell 2.0架构有能力在“混合模式”下运行，一个硬件队列处理图形命令，其它31个队列并行处理运算命令。理论上这和AMD的硬件有相同的功能。但是貌似Nvidia从来没有将额外的Compute队列暴露给D3D12和Vulkan，取而代之的是让系统将Compute任务合并到图形队列。直到发布最近的Pascal架构，他们在最终决定提供点这方面的相关信息。他们的[白皮书](http://international.download.nvidia.com/geforce-com/international/pdfs/GeForce_GTX_1080_Whitepaper_FINAL.pdf)有一部分描述了新的特性称作“dynamic load balancing”，如下图所示：
+文档里描述有32个硬件队列，并且申明队列可以被单个应用用来提交多个内核任务或者多个CUDA应用同时提交工作负载。遗憾的是这个功能仅限于CUDA，从[Nvidia的说明](http://www.anandtech.com/show/9124/amd-dives-deep-on-asynchronous-shading)指出它们的GPU不能并行执行Hyper-q命令和图形命令。根据Nvidia的说法，只有最近的 Maxwell 2.0架构有能力在“混合模式”下运行，一个硬件队列处理图形命令，其它31个队列并行处理运算命令。理论上这和AMD的硬件有相同的功能。但是貌似Nvidia从来没有将额外的Compute队列暴露给D3D12和Vulkan，取而代之的是让系统将Compute任务合并到图形队列。直到发布最近的Pascal架构，他们在最终决定提供点这方面的相关信息。他们的[白皮书](http://international.download.nvidia.com/geforce-com/international/pdfs/GeForce_GTX_1080_Whitepaper_FINAL.pdf)有一部分描述了新的特性称作“dynamic load balancing”，如下图所示：
 
 ![](res/nv_dynamic_load_balancing.png)
 
