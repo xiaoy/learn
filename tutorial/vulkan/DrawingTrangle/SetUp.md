@@ -1,7 +1,7 @@
 # Setup
 ## BaseCode
 ### 通用结构
-整个Vulkan程序运行的通用结果，其实也适用于游戏。
+整个Vulkan程序运行的通用框架结构，其实也适用于游戏。
 
 ```C++
 #include <vulkan/vulkan.h>
@@ -199,7 +199,7 @@ Vulkan的极简设计，错误检查非常有限。所以这些函数调用使�
 * 追踪对象的创建和销毁来查找资源泄露
 * 通过追溯线程调用源头来检查线程安全
 * 将每次调用和参数的日志输出的标准输出
-* 为性能分析和重放调用追踪Vulkan的调用
+* 通过回播(replay)调用来追踪Vulkan的调用栈，以及性能分析
 
 以下是检测层大概实现方法示例代码：
 
@@ -320,3 +320,151 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 ### 配置
 检验层还有许多指定标志，具体查看Vulkan SDK下的`Config`目录，`vk_layer_setting.txt`解释如何配置检验层。
 
+## Physical devices and queue families
+### 选择物理设备
+每台电脑可能有多个显卡，同时Vulkan需要指定显卡来执行任务。以下代码分别用来索引显卡和列举显卡：
+
+```C++
+// 索引显卡
+VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+
+// 列举显卡数量
+uint32_t deviceCount = 0;
+vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
+
+// 获取所有显卡数据
+std::vector<VkPhysicalDevice> devices(deviceCount);
+vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+```
+### 物理设备基础适配
+有多个显卡后，需要选择合适的显卡，这里通过查询显卡基础属性，比如名字，类型，以及支持的Vulkan版本。
+
+```C++
+VkPhysicalDeviceProperties deviceProperties;
+vkGetPhysicalDeviceProperties(device, &deviceProperties);
+```
+
+还可以通过查询显卡特性，比如图片压缩，64bit浮点，多窗口渲染。
+
+```C++
+VkPhysicalDeviceFeatures deviceFeatures;
+vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+```
+
+最后通过这些属性和特性，按照自己的需求筛选出合适的显卡。
+
+### Queue families
+几乎所有的Vulkan操作需要向队列里提交命令来完成，比如上传图片，内存拷贝，绘制。不同的队列隶属于不同的队列家族，每个队列家族允许特定的命令执行。例如有队列家族只允许*计算命令(compute commands)*，有的只允许*内存拷贝(memory transfer)*。
+
+我们需要先取得显卡支持哪些队列家族，然后再选择我们需要的队列家族。
+```C++
+// 这里用到了 C++的optional，可以知道是否有赋值
+struct QueueFamilyIndices {
+    std::optional<uint32_t> graphicsFamily;
+
+    bool isComplete() {
+        return graphicsFamily.has_value();
+    }
+};
+
+QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device) {
+    QueueFamilyIndices indices;
+
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+    int i = 0;
+    for (const auto& queueFamily : queueFamilies) {
+        if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            indices.graphicsFamily = i;
+        }
+
+        if (indices.isComplete()) {
+            break;
+        }
+
+        i++;
+    }
+    return indices;
+}
+
+bool isDeviceSuitable(VkPhysicalDevice device) {
+    QueueFamilyIndices indices = findQueueFamilies(device);
+
+    return indices.isComplete();
+}
+```
+
+## Logical device and queues
+### 简介
+*逻辑设备*和*instance*的创建流程相似，通过指定我们要使用的物理设备特性来创建，*逻辑设备*的作用是和*物理设备*来交互。我们需要从查询到的队列家族里指定要使用的队列。从一个物理设备创建多个逻辑设备也是可以的。
+
+```C++
+VkDevice device;
+```
+
+### 指定创建的队列
+创建*逻辑设备*需要队列创建信息，数据结构为`VkDeviceQueueCreateInfo`，指定对应队列家族以及队列数量，以及队列对此应用的提交的命令缓存处理的优先级，范围为[0.0, 1.0]。
+
+```C++
+QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+VkDeviceQueueCreateInfo queueCreateInfo = {};
+queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
+queueCreateInfo.queueCount = 1;
+
+float queuePriority = 1.0f;
+queueCreateInfo.pQueuePriorities = &queuePriority;
+```
+
+### 指定要使用的设备特性
+指定的特性来自从物理设备查询的特性，比如`geometry shader`。当前不需要指定。
+
+```C++
+VkPhysicalDeviceFeatures deviceFeatures = {};
+```
+
+### 创建逻辑设备
+创建逻辑设备的数据结构为`VkDeviceCreateInfo`。
+
+```C++
+VkDeviceCreateInfo createInfo = {};
+createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+
+createInfo.pQueueCreateInfos = &queueCreateInfo;
+createInfo.queueCreateInfoCount = 1;
+
+createInfo.pEnabledFeatures = &deviceFeatures;
+```
+
+类似于`VkInstanceCreateInfo`，`VkdeviceCreateInfo`也需要提供扩展层和验证层。但逻辑设备的扩展层和instance的不一样，逻辑设备的其中一个扩展层为`VK_KHR_swapchain`，此扩展层用来将渲染好的贴图发送到窗口显示。在后续的章节将添加此扩展。
+
+逻辑设备的验证层和instance一致，在最新的Vulkan实现了已经不需要为逻辑设备创建信息指定验证层，但为了兼容老的实现，这里还是指定了。
+
+```C++
+createInfo.enabledExtensionCount = 0;
+
+if (enableValidationLayers) {
+    createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+    createInfo.ppEnabledLayerNames = validationLayers.data();
+} else {
+    createInfo.enabledLayerCount = 0;
+}
+
+if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
+    throw std::runtime_error("failed to create logical device!");
+}
+```
+
+### 获取队列句柄
+队列随着逻辑设备创建而创建，伴随逻辑设备的销毁而销毁。所以只需获取队列的句柄使用即可，不需要关心其生命周期。
+
+```C++
+VkQueue graphicsQueue;
+// 第三个参数为逻辑设备创建的队列索引
+vkGetDeviceQueue(device, indices.graphicsFamily.value(), 0, &graphicsQueue);
+```

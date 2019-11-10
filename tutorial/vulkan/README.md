@@ -4,7 +4,8 @@
 
 ## [开发环境](./DevEnv/README.md)
 
-## [绘制三角形]()
+## 绘制三角形
+### [初始化环境](./DrawingTrangle/SetUp.md)
 
 ## [顶点缓存]()
 
