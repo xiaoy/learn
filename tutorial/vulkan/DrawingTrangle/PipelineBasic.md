@@ -420,7 +420,7 @@ void cleanup() {
 
 ## 渲染批次
 ### 设置
-在完成创建管线之前，需要设置Vulkan渲染使用的framebuffer附件(attachments)。需要指定使用到的颜色和深度缓存，采样数以及在整个渲染流程如何处理它们。所有这些信息封装在*渲染通道对象(render pass object)*上。所以需要在创建渲染管线之前创建渲染批次对象。
+在完成创建管线之前，需要设置Vulkan渲染使用的framebuffer附件(attachments)。需要指定使用到的颜色和深度缓存，采样数以及在整个渲染流程如何处理它们。所有这些信息封装在 *渲染批次对象(render pass object)* 上。所以需要在创建渲染管线之前创建渲染批次对象。
 
 ### 附件说明(attachment description)
 当前情况是仅仅使用颜色缓存附件，这里所说的颜色缓存既是swapchain里的图像。
