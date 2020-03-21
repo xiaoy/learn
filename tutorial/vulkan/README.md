@@ -1,8 +1,8 @@
 # learn vulkan
 
-* [总览](./OverView/)
+* [总览](./Overview/README.md)
 
-* [开发环境](./DevEnv/)
+* [开发环境](./DevEnv/README.md)
 
 * 绘制三角形
   * [初始化环境](./DrawingTrangle/SetUp.md)
