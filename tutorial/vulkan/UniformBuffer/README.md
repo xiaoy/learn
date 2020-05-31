@@ -9,7 +9,7 @@
 * 从描述符池分配描述符设置(descriptor set)
 * 在渲染时绑定描述符设置
 
-*描述符布局* 指定了将被管线访问的资源类型，正如渲染批次申明了将被访问的附件(attachment)类型。*描述符设置*申明了将要被正真绑定到描述符上的buffer 或 image 资源，就像framebuffer申明了正真绑定到渲染批次附件上的image views。*描述符设置*类似顶点buffer和framebuffer那样绑定到渲染命令。
+*描述符布局* 指定了将被管线访问的资源类型，正如渲染批次申明了将被访问的附件(attachment)类型。*描述符设置*申明了将要被正真绑定到描述符上的buffer 或 image 资源，就像framebuffer申明了真正绑定到渲染批次附件上的image views。*描述符设置*类似顶点buffer和framebuffer那样绑定到渲染命令。
 
 有很多种类的描述符，这里我们只用到`uniform buffer object(UBO)`。虽说描述符种类不同，但使用流程相同。我们想让shader访问到如下的结构体。
 
